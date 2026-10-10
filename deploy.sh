@@ -359,9 +359,12 @@ EOF
 }
 
 ipt_add(){
-  local table="$1"; shift
-  if ! iptables -t "$table" -C "$@" >/dev/null 2>&1; then
-    iptables -t "$table" -I "$@" >/dev/null
+  local table="$1"
+  local chain="$2"
+  local pos="$3"
+  shift 3
+  if ! iptables -t "$table" -C "$chain" "$@" >/dev/null 2>&1; then
+    iptables -t "$table" -I "$chain" "$pos" "$@" >/dev/null
   fi
 }
 
