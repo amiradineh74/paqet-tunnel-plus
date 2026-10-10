@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 APP="Paqet Tunnel Plus"
-VERSION="0.1.1"
+VERSION="0.1.2"
 PAQET_VERSION="v1.0.0-alpha.21"
 PAQET_BIN="/usr/local/bin/paqet"
 BASE_DIR="/etc/paqet-tunnel-plus"
@@ -128,6 +128,23 @@ detect_network(){
 
   if ! valid_mac "${GATEWAY_MAC:-}"; then
     warn "Gateway MAC was not detected automatically."
+    echo
+    echo "Manual gateway MAC guide:"
+    echo "  Interface : $IFACE"
+    echo "  Gateway   : $GATEWAY"
+    echo
+    echo "  Try these commands in another SSH window:"
+    echo "    ping -c 1 $GATEWAY"
+    echo "    ip neigh show $GATEWAY dev $IFACE"
+    echo
+    echo "  If no MAC appears, try:"
+    echo "    arping -c 2 -I $IFACE $GATEWAY"
+    echo
+    echo "  Look for a MAC like:"
+    echo "    00:11:22:33:44:55"
+    echo
+    echo "  Then paste that MAC below."
+    echo
     while true; do
       read -r -p "Gateway MAC: " GATEWAY_MAC
       valid_mac "$GATEWAY_MAC" && break
