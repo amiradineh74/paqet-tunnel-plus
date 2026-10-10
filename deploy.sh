@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 APP="Paqet Tunnel Plus"
-VERSION="0.1.0"
+VERSION="0.1.1"
 PAQET_VERSION="v1.0.0-alpha.21"
 PAQET_BIN="/usr/local/bin/paqet"
 BASE_DIR="/etc/paqet-tunnel-plus"
@@ -20,6 +20,7 @@ need_root(){ [ "${EUID}" -eq 0 ] || die "Run as root."; }
 
 valid_port(){ [[ "${1:-}" =~ ^[0-9]+$ ]] && [ "$1" -ge 1 ] && [ "$1" -le 65535 ]; }
 valid_flag(){ [[ "${1:-}" =~ ^[FSRPAUECN]+$ ]]; }
+valid_mac(){ [[ "${1:-}" =~ ^([[:xdigit:]]{2}:){5}[[:xdigit:]]{2}$ ]]; }
 sanitize_name(){
   local n="${1:-tunnel}"
   n="${n// /-}"
@@ -34,10 +35,12 @@ install_deps(){
   if command -v apt-get >/dev/null 2>&1; then
     apt-get update -y >/dev/null
     apt-get install -y curl ca-certificates tar iproute2 iptables iptables-persistent libpcap0.8 >/dev/null
+    # arping makes gateway-MAC discovery reliable on routed /32 VPS networks (e.g. Hetzner).
+    apt-get install -y iputils-arping >/dev/null 2>&1 || apt-get install -y arping >/dev/null 2>&1 || true
   elif command -v dnf >/dev/null 2>&1; then
-    dnf install -y curl ca-certificates tar iproute iptables libpcap >/dev/null
+    dnf install -y curl ca-certificates tar iproute iptables libpcap iputils >/dev/null
   elif command -v yum >/dev/null 2>&1; then
-    yum install -y curl ca-certificates tar iproute iptables libpcap >/dev/null
+    yum install -y curl ca-certificates tar iproute iptables libpcap iputils >/dev/null
   else
     die "Unsupported package manager."
   fi
@@ -78,6 +81,34 @@ install_paqet(){
   ok "Installed $("$PAQET_BIN" version 2>/dev/null | head -n1 || echo "$PAQET_VERSION")."
 }
 
+detect_gateway_mac(){
+  local mac="" arp_out=""
+
+  # 1) Existing neighbour cache.
+  mac="$(ip neigh show to "$GATEWAY" dev "$IFACE" 2>/dev/null | awk '/lladdr/{print $5;exit}')"
+  valid_mac "$mac" && { echo "${mac,,}"; return 0; }
+
+  # 2) Generate ordinary traffic, then re-check neighbour cache.
+  ip route get "$GATEWAY" >/dev/null 2>&1 || true
+  ping -c1 -W1 -I "$IFACE" "$GATEWAY" >/dev/null 2>&1 || true
+  sleep 0.2
+  mac="$(ip neigh show to "$GATEWAY" dev "$IFACE" 2>/dev/null | awk '/lladdr/{print $5;exit}')"
+  valid_mac "$mac" && { echo "${mac,,}"; return 0; }
+
+  # 3) ARP directly. This is especially useful on Hetzner/routed /32 VPS setups.
+  if command -v arping >/dev/null 2>&1; then
+    arp_out="$(arping -c 2 -w 3 -I "$IFACE" "$GATEWAY" 2>/dev/null || true)"
+    mac="$(sed -nE 's/.*\[(([[:xdigit:]]{2}:){5}[[:xdigit:]]{2})\].*/\1/p' <<<"$arp_out" | head -n1)"
+    valid_mac "$mac" && { echo "${mac,,}"; return 0; }
+
+    # Some arping builds update the kernel neighbour table instead of printing brackets.
+    mac="$(ip neigh show to "$GATEWAY" dev "$IFACE" 2>/dev/null | awk '/lladdr/{print $5;exit}')"
+    valid_mac "$mac" && { echo "${mac,,}"; return 0; }
+  fi
+
+  return 1
+}
+
 detect_network(){
   local route
   route="$(ip -4 route get 1.1.1.1 2>/dev/null | head -n1)" || true
@@ -93,17 +124,18 @@ detect_network(){
   fi
   [ -n "${GATEWAY:-}" ] || die "Could not detect gateway."
 
-  ping -c1 -W1 "$GATEWAY" >/dev/null 2>&1 || true
-  GATEWAY_MAC="$(ip neigh show "$GATEWAY" dev "$IFACE" | awk '/lladdr/{print $5;exit}')"
-  if [ -z "${GATEWAY_MAC:-}" ]; then
-    ip neigh replace "$GATEWAY" dev "$IFACE" nud probe >/dev/null 2>&1 || true
-    sleep 1
-    GATEWAY_MAC="$(ip neigh show "$GATEWAY" dev "$IFACE" | awk '/lladdr/{print $5;exit}')"
-  fi
+  GATEWAY_MAC="$(detect_gateway_mac || true)"
 
-  if [ -z "${GATEWAY_MAC:-}" ]; then
+  if ! valid_mac "${GATEWAY_MAC:-}"; then
     warn "Gateway MAC was not detected automatically."
-    read -r -p "Gateway MAC: " GATEWAY_MAC
+    while true; do
+      read -r -p "Gateway MAC: " GATEWAY_MAC
+      valid_mac "$GATEWAY_MAC" && break
+      warn "Invalid MAC format. Example: 00:11:22:33:44:55"
+    done
+    GATEWAY_MAC="${GATEWAY_MAC,,}"
+  else
+    ok "Gateway MAC detected automatically: $GATEWAY_MAC"
   fi
 
   echo
