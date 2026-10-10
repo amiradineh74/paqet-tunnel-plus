@@ -47,3 +47,21 @@ Run the **Kharej server first**, save the generated encryption key, then run the
 - Generated configs are stored under `/etc/paqet-tunnel-plus/` with mode 600.
 - Services are named `paqet-plus-<role>-<name>`.
 - Do not run two Paqet servers on the same raw transport port simultaneously.
+
+
+## Gateway MAC troubleshooting
+
+The script tries to detect the gateway MAC automatically. If that fails, it prints the detected interface and gateway and shows these commands:
+
+```bash
+ping -c 1 GATEWAY_IP
+ip neigh show GATEWAY_IP dev INTERFACE
+```
+
+If the neighbour table still has no MAC, try:
+
+```bash
+arping -c 2 -I INTERFACE GATEWAY_IP
+```
+
+Copy the MAC address shown in the output (format: `00:11:22:33:44:55`) and paste it into the script.
