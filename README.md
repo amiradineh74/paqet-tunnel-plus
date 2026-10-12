@@ -1,67 +1,126 @@
-# Paqet Tunnel Plus
+# Paqet Tunnel Plus — مدیریت تونل Paqet
 
-A menu-driven installer/manager for the official [hanselime/paqet](https://github.com/hanselime/paqet) core.
+ابزار مستقل نصب و مدیریت تونل بر پایهٔ هستهٔ اصلی [hanselime/paqet](https://github.com/hanselime/paqet)، با منوی تعاملی، پروفایل‌های شبکه، فوروارد چند پورت، قوانین فایروال و امکانات عیب‌یابی.
 
-This project was written independently and focuses on practical deployment profiles, role-aware firewall rules, multiple forwards, and diagnostics.
+> این پروژه **هستهٔ Paqet را توسعه نداده است**؛ اسکریپتی برای نصب، پیکربندی و مدیریت آن است. عملکرد و امکان اتصال در شرایط مختلف شبکه تضمین نمی‌شود.
 
-## Tested profile
+## پیش‌نیازها
 
-The **Iran Restrictive / Stable Tested** profile uses:
+- سرور لینوکسی با دسترسی `root`
+- دو ماشین: **سرور خارج** (نقش Server) و **سرور ایران** (نقش Client)
+- دسترسی سرورها به اینترنت برای دریافت وابستگی‌ها و نسخهٔ رسمی Paqet
+- مشخص‌بودن پورت سرویس مقصد (برای مثال Xray) و پورت انتقال بین دو سرور
 
-- Client (Iran): `local_flag: ["S"]`, `remote_flag: ["SA"]`
-- Server (Kharej): `local_flag: ["SA"]`
-- `conn: 1`
-- KCP `fast2`
-- MTU `1200`
-- SMUX keepalive `2` sec
-- SMUX timeout `30` sec
-- Role-aware `NOTRACK` + kernel `RST` drop rules
+اسکریپت وابستگی‌های لازم را با مدیر بستهٔ سیستم نصب می‌کند. این کار ممکن است قوانین فایروال را تغییر دهد؛ قبل از اجرا روی سرور عملیاتی، از تنظیمات فعلی نسخهٔ پشتیبان بگیرید.
 
-The default core is pinned to **Paqet v1.0.0-alpha.21**, the version used for the tested profile.
+## اجرای سریع
 
-## One-line run
+این دستور را **ابتدا روی سرور خارج** و سپس روی **سرور ایران** اجرا کنید:
 
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/amiradineh74/paqet-tunnel-plus/main/install.sh)
 ```
 
-Run the **Kharej server first**, save the generated encryption key, then run the **Iran client** and enter the same key.
+اسکریپت منوی زیر را ارائه می‌کند:
 
-## Menu options
+| گزینه | کاربرد |
+|---|---|
+| `1) Deploy new tunnel` | ساخت تونل جدید در نقش Server یا Client |
+| `2) Manage / Diagnostics` | مدیریت و عیب‌یابی سرویس‌ها |
+| `3) Install/Reinstall tested Paqet core` | نصب یا نصب مجدد هستهٔ آزمایش‌شده |
+| `0) Exit` | خروج |
 
-- Deploy Server or Client
-- Standard / Iran Restrictive / Custom TCP flag profiles
-- Stable / Default / Custom KCP tuning
-- Multiple TCP forwards, e.g. `8443=8443,8080=8080`
-- Optional SOCKS5
-- Automatic role-aware NOTRACK/RST protection
-- Systemd service creation
-- Status, live logs, restart
-- Firewall counters
-- 20-second RST monitor
-- Redacted config display
+## مراحل راه‌اندازی
 
-## Notes
+### ۱. سرور خارج (Server)
 
-- Secrets are never stored in this repository. Encryption keys are generated or entered at install time.
-- Generated configs are stored under `/etc/paqet-tunnel-plus/` with mode 600.
-- Services are named `paqet-plus-<role>-<name>`.
-- Do not run two Paqet servers on the same raw transport port simultaneously.
+در منو گزینهٔ `1` و سپس نقش `1) SERVER` را انتخاب کنید.
 
+- یک **نام تونل** انتخاب کنید (مثلاً `germany`).
+- **پورت انتقال Paqet** را تعیین کنید (مثلاً `29999`).
+- پروفایل شبکه و عملکرد مناسب را انتخاب کنید.
+- اسکریپت **کلید رمزنگاری** تولید می‌کند؛ آن را در محلی امن نگه دارید و عمومی نکنید.
+- پس از نصب، فعال‌شدن سرویس را بررسی کنید.
 
-## Gateway MAC troubleshooting
+نام سرویس با الگوی `paqet-plus-server-<name>` ساخته می‌شود.
 
-The script tries to detect the gateway MAC automatically. If that fails, it prints the detected interface and gateway and shows these commands:
+### ۲. سرور ایران (Client)
+
+همان دستور نصب را اجرا کنید و گزینهٔ `1` و نقش `2) CLIENT` را انتخاب کنید.
+
+- در قسمت `Kharej server IPv4`، **IP سرور خارج** را وارد کنید.
+- **پورت انتقال** باید دقیقاً همان پورتی باشد که روی Server وارد کرده‌اید.
+- پروفایل‌ها و **کلید رمزنگاری** باید با سمت Server سازگار باشند.
+- برای ارسال ترافیک سرویس مقصد، `Port forwarding` را انتخاب کنید.
+- فورواردها را با قالب `local=remote` وارد کنید؛ نمونه: `2053=2053` یا `8443=8443,8080=8080`.
+
+> پورت انتقال Paqet (مثلاً `29999`) با پورت سرویس Xray (مثلاً `2053`) **دو مفهوم متفاوت** هستند. تنظیم `2053=2053` یعنی اتصال به پورت ۲۰۵۳ سرور ایران از طریق تونل به پورت ۲۰۵۳ سرور خارج فرستاده شود.
+
+نام سرویس با الگوی `paqet-plus-client-<name>` ساخته می‌شود.
+
+### ۳. بررسی اتصال
+
+اجرای سرویس به‌تنهایی به معنی اتصال موفق نیست. پس از نصب، وضعیت سرویس، خطاهای ثبت‌شده و اتصال واقعی یک کاربر آزمایشی را بررسی کنید:
+
+```bash
+systemctl status paqet-plus-client-germany --no-pager
+journalctl -u paqet-plus-client-germany -n 50 --no-pager
+```
+
+نام `germany` صرفاً مثال است؛ آن را با نام تونل خود جایگزین کنید. روی سرور خارج نیز از `paqet-plus-server-<name>` استفاده کنید.
+
+## پروفایل آزمایش‌شده
+
+پروفایل `Iran Restrictive / Stable Tested` در اسکریپت شامل تنظیمات زیر است:
+
+| بخش | تنظیم |
+|---|---|
+| Client (ایران) | `local_flag: ["S"]` و `remote_flag: ["SA"]` |
+| Server (خارج) | `local_flag: ["SA"]` |
+| تعداد ارتباط | `conn: 1` |
+| حالت KCP | `fast2` |
+| MTU مربوط به KCP | `1200` |
+| SMUX keepalive | `2` ثانیه |
+| SMUX timeout | `30` ثانیه |
+| فایروال | قواعد متناسب با نقش، شامل `NOTRACK` و حذف RST مشخص‌شده |
+
+نسخهٔ پیش‌فرض هسته در این پروژه `v1.0.0-alpha.21` است. عبارت «آزمایش‌شده» به معنی تضمین عملکرد در همهٔ اپراتورها یا شبکه‌ها نیست.
+
+اسکریپت همچنین پروفایل استاندارد `PA/PA` و تنظیمات سفارشی TCP flags و KCP دارد.
+
+## قابلیت‌های دیگر
+
+- فوروارد چند پورت TCP
+- گزینهٔ SOCKS5 برای اتصال محلی
+- ساخت سرویس systemd برای اجرای خودکار پس از بوت
+- مشاهدهٔ وضعیت، لاگ زنده و راه‌اندازی مجدد
+- مشاهدهٔ شمارنده‌های فایروال، پایش کوتاه‌مدت RST و نمایش تنظیمات با مخفی‌سازی کلیدها
+
+## محل فایل‌ها و نکات امنیتی
+
+- فایل‌های پیکربندی در `/etc/paqet-tunnel-plus/` ذخیره می‌شوند و سطح دسترسی محدود دارند.
+- **کلید رمزنگاری را در GitHub، گزارش خطا یا تصویر عمومی منتشر نکنید.**
+- اسکریپت ممکن است قوانین `iptables` را اعمال و ذخیره کند. پیش از تغییر یا حذف قوانین، مطمئن شوید به مسیرهای عملیاتی دیگر آسیب نمی‌رسد.
+- دو سرویس Paqet Server را روی یک **IP و پورت انتقال خام یکسان** هم‌زمان اجرا نکنید.
+- عملکرد واقعی زیر بار، تأخیر، قطع‌شدن ارتباط و محدودیت‌های شبکه را جداگانه آزمایش کنید.
+
+## عیب‌یابی MAC گیت‌وی
+
+اسکریپت تلاش می‌کند MAC روتر/گیت‌وی را به‌صورت خودکار تشخیص دهد. اگر موفق نشد، ابتدا در **همان سرور** با مقادیر واقعی خودتان بررسی کنید:
 
 ```bash
 ping -c 1 GATEWAY_IP
 ip neigh show GATEWAY_IP dev INTERFACE
 ```
 
-If the neighbour table still has no MAC, try:
+اگر MAC مشخص نشد و ابزار مربوطه نصب بود:
 
 ```bash
 arping -c 2 -I INTERFACE GATEWAY_IP
 ```
 
-Copy the MAC address shown in the output (format: `00:11:22:33:44:55`) and paste it into the script.
+`GATEWAY_IP` و `INTERFACE` را با اطلاعات خروجی اسکریپت جایگزین کنید. MAC قالبی مانند `00:11:22:33:44:55` دارد.
+
+## اعتبار و منبع
+
+هستهٔ اصلی: [hanselime/paqet](https://github.com/hanselime/paqet). این مخزن صرفاً ابزار نصب و مدیریت مستقل است و وابستگی رسمی به توسعه‌دهندگان هسته ندارد.
