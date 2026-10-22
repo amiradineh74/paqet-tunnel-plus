@@ -75,7 +75,14 @@ EOF
     return 1
   fi
 )
+owned_unit(){
+  [[ -f "$UNIT" ]] && grep -qF 'ExecStart=/usr/bin/python3 /opt/paqet-tunnel-plus/web/web_panel.py' "$UNIT"
+}
 remove_panel(){
+  if ! owned_unit; then
+    echo "[ERROR] Web unit missing or belongs to another application. No changes made."
+    return 1
+  fi
   read -r -p "Remove ONLY Paqet web panel service/files? [type REMOVE]: " answer
   [[ "$answer" == "REMOVE" ]] || { echo "Cancelled."; return 0; }
   systemctl disable --now "$SERVICE" 2>/dev/null || true
@@ -101,8 +108,8 @@ menu(){
     case "$option" in
       1) install_panel ;;
       2) systemctl status "$SERVICE" --no-pager -l || true; show_access ;;
-      3) systemctl restart "$SERVICE" && echo "[OK] Web restarted." ;;
-      4) systemctl stop "$SERVICE" && echo "[OK] Web stopped." ;;
+      3) if owned_unit; then systemctl restart "$SERVICE" && echo "[OK] Web restarted."; else echo "[ERROR] Web unit is not ours."; fi ;;
+      4) if owned_unit; then systemctl stop "$SERVICE" && echo "[OK] Web stopped."; else echo "[ERROR] Web unit is not ours."; fi ;;
       5) remove_panel ;;
       0) return 0 ;;
       *) echo "Invalid choice" ;;
@@ -112,7 +119,7 @@ menu(){
 case "$*" in
   --install) install_panel ;;
   --status) systemctl status "$SERVICE" --no-pager -l || true; show_access ;;
-  --stop) systemctl stop "$SERVICE" ;;
+  --stop) owned_unit && systemctl stop "$SERVICE" ;;
   --uninstall) remove_panel ;;
   "") menu ;;
   *) echo "Usage: manage.sh [--install|--status|--stop|--uninstall]"; exit 2 ;;
