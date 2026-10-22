@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 APP="Paqet Tunnel Plus"
-VERSION="0.1.3"
+VERSION="0.1.4"
 PAQET_VERSION="v1.0.0-alpha.21"
 PAQET_BIN="/usr/local/bin/paqet"
 BASE_DIR="/etc/paqet-tunnel-plus"
@@ -622,6 +622,23 @@ flag_synced_lab(){
   python3 /opt/paqet-tunnel-plus/synced_flag_lab.py "${args[@]}"
 }
 
+web_panel_manager(){
+  command -v curl >/dev/null 2>&1 || { warn "curl required for optional web menu."; return; }
+  local temp
+  temp="$(mktemp)" || return
+  if ! curl -fsSL --retry 3 --connect-timeout 10 \
+      "https://raw.githubusercontent.com/amiradineh74/paqet-tunnel-plus/main/web/manage.sh" -o "$temp"; then
+    warn "Cannot download optional web manager."
+    rm -f "$temp"; return
+  fi
+  if ! bash -n "$temp"; then
+    warn "Downloaded web manager failed syntax check."
+    rm -f "$temp"; return
+  fi
+  bash "$temp"
+  rm -f "$temp"
+}
+
 manage(){
   need_root
   while true; do
@@ -635,6 +652,7 @@ manage(){
     echo "  6) RST monitor (20 sec)"
     echo "  7) Show redacted config"
     echo "  8) Synchronized Flag Auto-Test (NO inter-server SSH)"
+    echo "  9) Web Panel (OPTIONAL / localhost / read-only)"
     echo "  0) Back"
     read -r -p "Choose: " x
     case "$x" in
@@ -653,6 +671,7 @@ manage(){
         sed -E 's/(^[[:space:]]*key:[[:space:]]*).*/\1"<REDACTED>"/' "$CONFIG"
         ;;
       8) flag_synced_lab ;;
+      9) web_panel_manager ;;
       0) return ;;
       *) warn "Invalid choice." ;;
     esac
