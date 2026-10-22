@@ -16,12 +16,12 @@ show_access(){
   echo "Token on server: sudo cat /opt/paqet-tunnel-plus/web-panel.token"
   echo "Never share the token or expose 8792 without HTTPS and stronger access controls."
 }
-install_panel(){
+install_panel() (
   command -v python3 >/dev/null || { echo "[ERROR] Python3 is required."; return 1; }
   command -v curl >/dev/null || { echo "[ERROR] curl is required."; return 1; }
   local tmp file stamp
   tmp="$(mktemp -d)"
-  trap 'rm -rf "$tmp"' RETURN
+  trap 'rm -rf "$tmp"' EXIT
   for file in web_panel.py index.html app.js; do
     echo "[*] Downloading web/$file..."
     curl -fsSL --retry 3 --connect-timeout 10 "$BASE_URL/$file" -o "$tmp/$file" || return 1
@@ -74,7 +74,7 @@ EOF
     echo "[ERROR] Panel failed. Run: journalctl -u $SERVICE -n 50 --no-pager"
     return 1
   fi
-}
+)
 remove_panel(){
   read -r -p "Remove ONLY Paqet web panel service/files? [type REMOVE]: " answer
   [[ "$answer" == "REMOVE" ]] || { echo "Cancelled."; return 0; }
