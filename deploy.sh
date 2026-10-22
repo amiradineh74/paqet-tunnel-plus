@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 APP="Paqet Tunnel Plus"
-VERSION="0.1.2"
+VERSION="0.1.3"
 PAQET_VERSION="v1.0.0-alpha.21"
 PAQET_BIN="/usr/local/bin/paqet"
 BASE_DIR="/etc/paqet-tunnel-plus"
@@ -577,6 +577,51 @@ diag_rst(){
   fi
 }
 
+flag_synced_lab(){
+  command -v python3 >/dev/null 2>&1 || { warn "Python3 is required."; return; }
+  [ -r /opt/paqet-tunnel-plus/synced_flag_lab.py ] || {
+    warn "Missing synced_flag_lab.py: reinstall via install.sh from GitHub."; return;
+  }
+  choose_service || return
+  local role name config mode idx start_at server_ip
+  case "$SELECTED_SERVICE" in
+    paqet-plus-client-*) role=client; name="${SELECTED_SERVICE#paqet-plus-client-}" ;;
+    paqet-plus-server-*) role=server; name="${SELECTED_SERVICE#paqet-plus-server-}" ;;
+    *) warn "Select a Paqet client or server."; return ;;
+  esac
+  config="$BASE_DIR/${name}-${role}.yaml"
+  [ -f "$config" ] || { warn "Missing expected config: $config"; return; }
+  echo
+  echo "Synchronized Flag Auto-Test — NO SSH between servers"
+  echo "Run on BOTH tunnel endpoints with the SAME UTC epoch, mode and profile index."
+  echo "This temporarily restarts the SELECTED service; other tunnels are untouched."
+  echo "Both servers must have working NTP/time synchronization."
+  echo "Now UTC: $(date -u '+%Y-%m-%d %H:%M:%S')"
+  echo "Suggested shared start epoch (+5 min): $(date -u -d '+5 minutes' +%s)"
+  echo "  1) Scan six flag profiles (about 7.5 minutes)"
+  echo "  2) Stability test one selected profile (about 6 minutes)"
+  read -r -p "Choose [1]: " mode
+  case "${mode:-1}" in
+    1) mode=scan; idx=1 ;;
+    2)
+      mode=stability
+      read -r -p "Profile index [1..6]: " idx
+      [[ "$idx" =~ ^[1-6]$ ]] || { warn "Invalid profile index"; return; }
+      ;;
+    *) warn "Invalid mode"; return ;;
+  esac
+  read -r -p "Shared future UNIX epoch, same on BOTH servers: " start_at
+  [[ "$start_at" =~ ^[0-9]{10,11}$ ]] || { warn "Invalid timestamp"; return; }
+  local args=(--role "$role" --service "$SELECTED_SERVICE" --config "$config"
+              --mode "$mode" --profile-index "$idx" --start-at "$start_at")
+  if [ "$role" = client ]; then
+    read -r -p "Destination server IPv4 (Germany): " server_ip
+    [ -n "$server_ip" ] || { warn "Server IPv4 required"; return; }
+    args+=(--server-ip "$server_ip")
+  fi
+  python3 /opt/paqet-tunnel-plus/synced_flag_lab.py "${args[@]}"
+}
+
 manage(){
   need_root
   while true; do
@@ -589,6 +634,7 @@ manage(){
     echo "  5) Firewall counters"
     echo "  6) RST monitor (20 sec)"
     echo "  7) Show redacted config"
+    echo "  8) Synchronized Flag Auto-Test (NO inter-server SSH)"
     echo "  0) Back"
     read -r -p "Choose: " x
     case "$x" in
@@ -606,6 +652,7 @@ manage(){
         source "$m"
         sed -E 's/(^[[:space:]]*key:[[:space:]]*).*/\1"<REDACTED>"/' "$CONFIG"
         ;;
+      8) flag_synced_lab ;;
       0) return ;;
       *) warn "Invalid choice." ;;
     esac
