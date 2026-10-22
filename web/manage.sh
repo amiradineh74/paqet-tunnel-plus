@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Paqet Tunnel Plus optional read-only Web Panel
+# Paqet Tunnel Plus optional Web Panel (HTTPS option staged)
 set -Eeuo pipefail
 [[ "$(id -u)" == "0" ]] || { echo "[ERROR] Run as root."; exit 1; }
 
@@ -10,11 +10,11 @@ SERVICE="paqet-plus-web.service"
 
 show_access(){
   echo
-  echo "Panel only listens on 127.0.0.1:8792 (NOT public)."
+  echo "Backend listens on 127.0.0.1:8792; PUBLIC access must use HTTPS reverse proxy."
   echo "Windows/Linux computer: ssh -L 8792:127.0.0.1:8792 root@SERVER_IP"
   echo "Browser: http://127.0.0.1:8792"
   echo "Token on server: sudo cat /opt/paqet-tunnel-plus/web-panel.token"
-  echo "Never share the token or expose 8792 without HTTPS and stronger access controls."
+  echo "Never share the token or expose raw port 8792."
 }
 install_panel() (
   command -v python3 >/dev/null || { echo "[ERROR] Python3 is required."; return 1; }
@@ -42,7 +42,7 @@ install_panel() (
   if [[ ! -e "$UNIT" ]]; then
     cat >"$UNIT" <<'EOF'
 [Unit]
-Description=Paqet Tunnel Plus Web (local read-only dashboard)
+Description=Paqet Tunnel Plus Web (backend; optional HTTPS proxy)
 After=network.target
 [Service]
 Type=simple
@@ -97,12 +97,14 @@ remove_panel(){
 menu(){
   while true; do
     echo
-    echo "Paqet Web Panel (OPTIONAL / READ-ONLY / LOCALHOST)"
+    echo "Paqet Web Panel (OPTIONAL / HTTPS SUPPORTED / PREVIEW)"
     echo "  1) Install or update and start panel"
     echo "  2) Status / access instructions"
     echo "  3) Restart web panel only"
     echo "  4) Stop web panel only"
     echo "  5) Uninstall web panel only"
+    echo "  6) Configure public HTTPS (requires domain & Caddy 2.8+)"
+    echo "  7) Public HTTPS proxy status"
     echo "  0) Back"
     read -r -p "Choose: " option
     case "$option" in
@@ -111,6 +113,24 @@ menu(){
       3) if owned_unit; then systemctl restart "$SERVICE" && echo "[OK] Web restarted."; else echo "[ERROR] Web unit is not ours."; fi ;;
       4) if owned_unit; then systemctl stop "$SERVICE" && echo "[OK] Web stopped."; else echo "[ERROR] Web unit is not ours."; fi ;;
       5) remove_panel ;;
+      6)
+        local proxy_tmp
+        proxy_tmp="$(mktemp)"
+        if curl -fsSL --connect-timeout 10 "$BASE_URL/public_https.sh" -o "$proxy_tmp" && bash -n "$proxy_tmp"; then
+          bash "$proxy_tmp" --install
+        else
+          echo "[ERROR] Could not download or validate public proxy installer."
+        fi
+        rm -f "$proxy_tmp"
+        ;;
+      7)
+        local status_tmp
+        status_tmp="$(mktemp)"
+        if curl -fsSL --connect-timeout 10 "$BASE_URL/public_https.sh" -o "$status_tmp" && bash -n "$status_tmp"; then
+          bash "$status_tmp" --status
+        else echo "[ERROR] Public proxy status script unavailable."; fi
+        rm -f "$status_tmp"
+        ;;
       0) return 0 ;;
       *) echo "Invalid choice" ;;
     esac

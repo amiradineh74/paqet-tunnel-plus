@@ -1,6 +1,6 @@
 'use strict';
-/* Paqet Tunnel Plus Web 0.1.1: local read-only dashboard.
- * Sample values are illustrative; tests never run from this screen.
+/* Paqet Tunnel Plus Web 0.2-preview: selected service actions via authenticated local API.
+ * Internet exposure only behind a correctly configured HTTPS reverse proxy.
  */
 const byId = id => document.getElementById(id);
 const sections = {
@@ -24,6 +24,7 @@ const profiles = [
   {name:'pa-a',client:'PA / A',server:'A / PA',result:'0/8 در تست اولیه'}
 ];
 let token='', live=false, services=examples, selected=1, onConfirm=null;
+const behindHttpsProxy = window.location.protocol === 'https:';
 
 function showDialog(title, text, needsToken=false, next=null) {
   byId('modalHeading').textContent=title;
@@ -75,6 +76,11 @@ function paint() {
     sel.appendChild(o);
   });
   if(services.some(x=>x.service===old))sel.value=old;
+  const manager=byId('manageService');
+  const previous=manager.value;
+  manager.replaceChildren();
+  services.forEach(item=>{const option=document.createElement('option');option.value=item.service;option.textContent=item.service;manager.appendChild(option);});
+  if(services.some(x=>x.service===previous))manager.value=previous;
 }
 function paintFlags(){
   const list=byId('profiles');
@@ -94,8 +100,9 @@ function paintFlags(){
   byId('selectedProfile').textContent=(selected+1)+' — '+profiles[selected].name;
   byId('selectedFlags').textContent='Iran: '+profiles[selected].client+' | Germany: '+profiles[selected].server;
 }
-async function api(path){
-  const r=await fetch(path,{headers:{Authorization:'Bearer '+token},cache:'no-store'});
+async function api(path,options={}){
+  const headers={...(token?{Authorization:'Bearer '+token}:{}),...(options.headers||{})};
+  const r=await fetch(path,{...options,headers,cache:'no-store',credentials:'same-origin'});
   if(!r.ok)throw new Error('HTTP '+r.status);
   return await r.json();
 }
@@ -112,14 +119,14 @@ async function refresh(){
   } catch(e) {showDialog('خطای ارتباط','بروزرسانی انجام نشد: '+e.message);}
 }
 async function login(value){
-  token=String(value).trim();
+  token=behindHttpsProxy?'':String(value).trim();
   try {
     if(!(await api('/api/check')).ok)throw new Error('invalid');
     live=true;
     byId('loginBtn').textContent='قطع اتصال';
     byId('livePill').className='pill good';
-    byId('livePill').textContent='● متصل — فقط‌خواندنی';
-    byId('sideState').textContent='پایش زنده محلی';
+    byId('livePill').textContent='● متصل — مدیریت محدود';
+    byId('sideState').textContent='پایش و کنترل سرویس';
     hideDialog();
     await refresh();
   } catch(e) {
@@ -136,6 +143,8 @@ byId('loginBtn').addEventListener('click',()=>{
     byId('livePill').textContent='● نمونه اولیه — اتصال واقعی انجام نشده';
     byId('sideState').textContent='حالت نمایشی آفلاین';
     paint();
+  } else if(behindHttpsProxy){
+    login('');
   } else {
     showDialog('اتصال به پنل','توکن فایل /opt/paqet-tunnel-plus/web-panel.token را در این پنجره وارد کنید. آن را برای دیگران نفرستید.',true,login);
   }
@@ -148,6 +157,26 @@ byId('loadLogs').addEventListener('click',async()=>{
     byId('logOutput').textContent=(await api(q)).logs||'لاگی وجود ندارد';
   }catch(e){byId('logOutput').textContent='خطا: '+e.message;}
 });
+
+document.querySelectorAll('[data-service-action]').forEach(button=>{
+  button.addEventListener('click',async()=>{
+    if(!live){showDialog('ورود ضروری','ابتدا به پنل مدیریتی وارد شوید.');return;}
+    const service=byId('manageService').value;
+    const action=button.dataset.serviceAction;
+    if(!service || !['start','stop','restart'].includes(action))return;
+    const desc={start:'روشن کردن',stop:'متوقف کردن',restart:'راه‌اندازی مجدد'}[action];
+    if(!window.confirm(desc+' سرویس '+service+'؟ این عملیات ممکن است اتصال کاربران این تانل را قطع کند.'))return;
+    button.disabled=true;
+    try{
+      await api('/api/service/action',{
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({service,action})});
+      await refresh();
+      showDialog('عملیات ثبت شد',desc+' سرویس '+service+' انجام شد. نتیجه در تاریخچه سرور ثبت شده است.');
+    }catch(e){showDialog('خطا در عملیات','عملیات تأیید یا اجرا نشد: '+e.message);}
+    finally{button.disabled=false;}
+  });
+});
 byId('plannedManagement').addEventListener('click',()=>showDialog('امکانات آینده','مدیریت سرویس بعد از افزودن مجوزهای تفکیک‌شده، بکاپ و بازگشت امن فعال می‌شود.'));
 byId('plannedTest').addEventListener('click',()=>showDialog('تست سرعت واقعی','این نسخه تست سرعت اجرا نمی‌کند. اجرای تست نیازمند عامل آزمون در هر دو سرور و محدودیت حجم/زمان است.'));
 byId('plannedFlags').addEventListener('click',()=>showDialog('تست پرچم‌ها','برای پروفایل '+(selected+1)+' فعلاً از مدیریت SSH گزینه ۸ استفاده کنید؛ این رابط YAML را تغییر نمی‌دهد.'));
@@ -158,3 +187,4 @@ byId('copyCmd').addEventListener('click',()=>{
   }else showDialog('دستور اتصال',cmd);
 });
 paint();paintFlags();
+if(behindHttpsProxy)login('');
