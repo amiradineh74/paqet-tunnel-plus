@@ -220,6 +220,23 @@ def backup(selected, full, web):
     return target
 
 
+def normalize_saved_rule(tokens):
+    """Normalize only iptables-save's implicit TCP match for exact comparisons.
+
+    Never discard unrelated matches, comments, or custom flags.
+    """
+    if len(tokens) < 3:
+        return None
+    spec = tokens[2:]
+    if spec[:2] == ['-p', 'tcp'] and spec[2:4] == ['-m', 'tcp']:
+        spec = spec[:2] + spec[4:]
+    elif spec[:2] == ['-p', 'tcp'] and '-m' in spec:
+        index = spec.index('-m')
+        if spec[index:index+2] == ['-m', 'tcp']:
+            spec = spec[:index] + spec[index+2:]
+    return tokens[1], tuple(spec)
+
+
 def strip_persisted(rules):
     if not PERSIST.is_file():
         return 0
@@ -238,7 +255,8 @@ def strip_persisted(rules):
                 tokens = shlex.split(raw)
             except ValueError:
                 fail('Cannot safely parse saved iptables rule; persistence not modified')
-            if len(tokens) >= 3 and (table, tokens[1], tuple(tokens[2:])) in selected:
+            normalized = normalize_saved_rule(tokens)
+            if normalized and (table, normalized[0], normalized[1]) in selected:
                 removed += 1
                 continue
         remaining.append(line)
