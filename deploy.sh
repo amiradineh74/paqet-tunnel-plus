@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 APP="Paqet Tunnel Plus"
-VERSION="0.1.5"
+VERSION="0.1.6"
 PAQET_VERSION="v1.0.0-alpha.21"
 PAQET_BIN="/usr/local/bin/paqet"
 BASE_DIR="/etc/paqet-tunnel-plus"
@@ -639,17 +639,62 @@ web_panel_manager(){
   rm -f "$temp"
 }
 
-# PQP_CLEANUP_INTEGRATION_V1 — preview is the default.
-# Updates never automatically remove a tunnel.
+# PQP_CLEANUP_INTEGRATION_V2 — all removals use the guarded cleanup.py.
+# No firewall or service changes happen until the user confirms inside cleanup.py.
 cleanup_manager(){
   need_root
   local tool="/opt/paqet-tunnel-plus/cleanup.py"
   if [ ! -r "$tool" ]; then
     tool="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/cleanup.py"
   fi
-  [ -r "$tool" ] || { warn "cleanup.py not installed; first deploy this update."; return 1; }
+  [ -r "$tool" ] || { warn "cleanup.py not installed; update via install.sh first."; return 1; }
   command -v python3 >/dev/null 2>&1 || { warn "Python3 required for safe cleanup."; return 1; }
-  python3 "$tool" "$@"
+
+  if [ "$#" -gt 0 ]; then
+    python3 "$tool" "$@"
+    return $?
+  fi
+
+  echo
+  echo "Paqet Tunnel Plus — Safe Removal"
+  echo "  1) Preview full cleanup (NO CHANGES)"
+  echo "  2) Remove ONE selected tunnel (backed up, confirm required)"
+  echo "  3) Remove ALL Paqet Plus components on THIS host (backed up)"
+  echo "  0) Back"
+  local choice selected n
+  read -r -p "Choose: " choice || return 0
+  case "$choice" in
+    1) python3 "$tool" --all ;;
+    2)
+      local -a svcs=()
+      mapfile -t svcs < <(systemctl list-unit-files --type=service 'paqet-plus-*' --no-legend 2>/dev/null |
+        awk '$1 ~ /^paqet-plus-(client|server)-[a-zA-Z0-9_.-]+\.service$/ {sub(/\.service$/, "", $1); print $1}')
+      if [ "${#svcs[@]}" -eq 0 ]; then
+        warn "No Paqet Plus tunnel services found."
+        return 0
+      fi
+      echo "Select the exact Paqet tunnel to remove:"
+      for n in "${!svcs[@]}"; do printf '  %d) %s\n' "$((n+1))" "${svcs[$n]}"; done
+      read -r -p "Tunnel number (0 to cancel): " n || return 0
+      if ! [[ "$n" =~ ^[0-9]+$ ]] || [ "$n" -lt 1 ] || [ "$n" -gt "${#svcs[@]}" ]; then
+        warn "Cancelled or invalid selection."
+        return 0
+      fi
+      selected="${svcs[$((n-1))]}"
+      python3 "$tool" --service "$selected" --apply
+      ;;
+    3)
+      warn "FULL CLEANUP on THIS HOST: stops and removes every Paqet Tunnel Plus tunnel, service, and manager."
+      warn "Other applications are not targeted. A secure backup is retained."
+      python3 "$tool" --all --apply
+      if [ ! -e "/opt/paqet-tunnel-plus/deploy.sh" ]; then
+        ok "Full cleanup completed; exiting removed Paqet Plus manager."
+        exit 0
+      fi
+      ;;
+    0) return 0 ;;
+    *) warn "Invalid choice." ;;
+  esac
 }
 
 manage(){
@@ -666,7 +711,7 @@ manage(){
     echo "  7) Show redacted config"
     echo "  8) Synchronized Flag Auto-Test (NO inter-server SSH)"
     echo "  9) Web Panel (OPTIONAL / localhost / read-only)"
-    echo " 10) Uninstall tunnel / Full project cleanup (PREVIEW first)"
+    echo " 10) Safe Uninstall / Cleanup (preview or apply)"
     echo "  0) Back"
     read -r -p "Choose: " x
     case "$x" in
@@ -703,7 +748,7 @@ main_menu(){
     echo "  1) Deploy new tunnel"
     echo "  2) Manage / Diagnostics"
     echo "  3) Install/Reinstall tested Paqet core"
-    echo "  4) Uninstall / Cleanup (preview first)"
+    echo "  4) Uninstall / Cleanup (preview or apply)"
     echo "  0) Exit"
     echo
     read -r -p "Choose: " c
