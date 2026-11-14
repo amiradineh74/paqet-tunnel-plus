@@ -62,6 +62,27 @@ class CleanupTests(unittest.TestCase):
             self.assertIn("5555", saved)
             self.assertNotIn("29999", saved)
 
+    def test_client_persisted_rules_normalized_without_touching_other_services(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "rules.v4"
+            path.write_text("*raw\n:PREROUTING ACCEPT [0:0]\n"
+                            "-A PREROUTING -s 206.1.101.169/32 -p tcp -m tcp --sport 29999 -j NOTRACK\n"
+                            "-A OUTPUT -d 206.1.101.169/32 -p tcp -m tcp --dport 29999 -j NOTRACK\n"
+                            "-A OUTPUT -d 192.0.2.77/32 -p tcp -m tcp --dport 29999 -j NOTRACK\n"
+                            "COMMIT\n*mangle\n"
+                            "-A OUTPUT -d 206.1.101.169/32 -p tcp -m tcp --dport 29999 --tcp-flags RST RST -j DROP\n"
+                            "-A OUTPUT -d 206.1.101.169/32 -p tcp -m tcp --dport 29999 -m comment --comment other -j NOTRACK\n"
+                            "COMMIT\n")
+            with mock.patch.object(cleanup, "PERSIST", path):
+                count = cleanup.strip_persisted(cleanup.firewall_specs({
+                    "role": "client", "port": "29999", "ip": "206.1.101.169"
+                }))
+                saved = path.read_text()
+            self.assertEqual(count, 3)
+            self.assertIn("192.0.2.77/32", saved)
+            self.assertIn("--comment other", saved)
+            self.assertEqual(saved.count("206.1.101.169"), 1)
+
     def test_no_plaintext_metadata_evaluation(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "bad.meta"
