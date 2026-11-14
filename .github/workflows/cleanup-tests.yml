@@ -1,0 +1,21 @@
+name: Verify Paqet cleanup update
+
+on:
+  push:
+    branches:
+      - 'feature/safe-uninstall-*'
+  pull_request:
+
+jobs:
+  offline-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate shell syntax
+        run: |
+          bash -n deploy.sh
+          bash -n install.sh
+      - name: Validate Python and run offline tests
+        run: |
+          python3 -m py_compile cleanup.py
+          python3 -m unittest discover -s tests -p 'test_cleanup.py' -v
