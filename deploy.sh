@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 APP="Paqet Tunnel Plus"
-VERSION="0.1.4"
+VERSION="0.1.5"
 PAQET_VERSION="v1.0.0-alpha.21"
 PAQET_BIN="/usr/local/bin/paqet"
 BASE_DIR="/etc/paqet-tunnel-plus"
@@ -639,6 +639,19 @@ web_panel_manager(){
   rm -f "$temp"
 }
 
+# PQP_CLEANUP_INTEGRATION_V1 — preview is the default.
+# Updates never automatically remove a tunnel.
+cleanup_manager(){
+  need_root
+  local tool="/opt/paqet-tunnel-plus/cleanup.py"
+  if [ ! -r "$tool" ]; then
+    tool="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/cleanup.py"
+  fi
+  [ -r "$tool" ] || { warn "cleanup.py not installed; first deploy this update."; return 1; }
+  command -v python3 >/dev/null 2>&1 || { warn "Python3 required for safe cleanup."; return 1; }
+  python3 "$tool" "$@"
+}
+
 manage(){
   need_root
   while true; do
@@ -653,6 +666,7 @@ manage(){
     echo "  7) Show redacted config"
     echo "  8) Synchronized Flag Auto-Test (NO inter-server SSH)"
     echo "  9) Web Panel (OPTIONAL / localhost / read-only)"
+    echo " 10) Uninstall tunnel / Full project cleanup (PREVIEW first)"
     echo "  0) Back"
     read -r -p "Choose: " x
     case "$x" in
@@ -672,6 +686,7 @@ manage(){
         ;;
       8) flag_synced_lab ;;
       9) web_panel_manager ;;
+      10) cleanup_manager ;;
       0) return ;;
       *) warn "Invalid choice." ;;
     esac
@@ -688,6 +703,7 @@ main_menu(){
     echo "  1) Deploy new tunnel"
     echo "  2) Manage / Diagnostics"
     echo "  3) Install/Reinstall tested Paqet core"
+    echo "  4) Uninstall / Cleanup (preview first)"
     echo "  0) Exit"
     echo
     read -r -p "Choose: " c
@@ -695,6 +711,7 @@ main_menu(){
       1) deploy; pause ;;
       2) manage ;;
       3) install_deps; install_paqet; pause ;;
+      4) cleanup_manager; pause ;;
       0) exit 0 ;;
       *) warn "Invalid choice."; sleep 1 ;;
     esac
@@ -705,6 +722,8 @@ case "${1:-}" in
   --deploy) deploy ;;
   --manage) manage ;;
   --list) list_tunnels ;;
+  --uninstall) cleanup_manager ;;
+  --uninstall-all) cleanup_manager --all ;;
   --version) echo "$APP v$VERSION" ;;
   *) main_menu ;;
 esac
