@@ -81,5 +81,52 @@ class WebTests(unittest.TestCase):
             server.server_close()
             thread.join(timeout=5)
 
+    def test_invalid_management_action_never_runs(self):
+        with self.assertRaises(ValueError):
+            w.service_action('paqet-plus-client-tunnel', 'delete')
+
+    def test_cross_origin_write_rejected(self):
+        server=ThreadingHTTPServer(('127.0.0.1',0),w.Handler)
+        server.token=b'this-is-a-test-token-with-at-least-32-bytes'
+        server.html=(HERE/'index.html').read_bytes()
+        server.js=(HERE/'app.js').read_bytes()
+        thread=threading.Thread(target=server.serve_forever,daemon=True)
+        thread.start()
+        url='http://127.0.0.1:'+str(server.server_address[1])
+        try:
+            req=urllib.request.Request(url+'/api/service/action',
+                data=b'{"service":"paqet-plus-client-tunnel","action":"stop"}',
+                headers={'Authorization':'Bearer '+server.token.decode(),
+                         'Origin':'https://attacker.invalid',
+                         'Content-Type':'application/json'},method='POST')
+            with self.assertRaises(urllib.error.HTTPError) as caught:
+                urllib.request.urlopen(req,timeout=3)
+            self.assertEqual(caught.exception.code,403)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+
+    def test_incorrect_json_is_rejected_without_commands(self):
+        server=ThreadingHTTPServer(('127.0.0.1',0),w.Handler)
+        server.token=b'this-is-a-test-token-with-at-least-32-bytes'
+        server.html=(HERE/'index.html').read_bytes()
+        server.js=(HERE/'app.js').read_bytes()
+        thread=threading.Thread(target=server.serve_forever,daemon=True)
+        thread.start()
+        try:
+            url='http://127.0.0.1:'+str(server.server_address[1])
+            req=urllib.request.Request(url+'/api/service/action',
+                data=b'{}',
+                headers={'Authorization':'Bearer '+server.token.decode(),
+                         'Content-Type':'application/json'},method='POST')
+            with self.assertRaises(urllib.error.HTTPError) as caught:
+                urllib.request.urlopen(req,timeout=3)
+            self.assertEqual(caught.exception.code,400)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+
 if __name__=='__main__':
     unittest.main()

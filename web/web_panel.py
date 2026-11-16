@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""Paqet Tunnel Plus: optional loopback-only, read-only web panel.
-No modifications to Paqet services, firewall, tunnel YAML or secrets.
+"""Paqet Tunnel Plus: loopback-only backend, optionally proxied via HTTPS.
+Only explicitly authorized individual service start/stop/restart actions are permitted.
+Never edits tunnel YAML, iptables or Paqet core.
 """
 import argparse
 import hmac
@@ -10,6 +11,8 @@ import re
 import secrets
 import subprocess
 import sys
+import threading
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
@@ -19,6 +22,8 @@ SERVICE = re.compile(r'^paqet-plus-(?:client|server)-[A-Za-z0-9_.-]{1,60}$')
 SENSITIVE = re.compile(r'(?im)^([ \t]*(?:key|password|token|secret|authorization)[ \t]*:[ \t]*).*$')
 INLINE_SECRET = re.compile(r'(?i)((?:key|password|token|secret)[=:][ \t]*)([^\s,;]+)')
 MAX_LOG_LINES = 200
+ACTION_LOCK = threading.Lock()
+AUDIT_PATH = Path('/opt/paqet-tunnel-plus/web-panel.audit.jsonl')
 
 def run(argv):
     try:
@@ -75,8 +80,55 @@ def safe_logs(service,lines):
     output=SENSITIVE.sub(r'\1[REDACTED]',output)
     return INLINE_SECRET.sub(lambda m:m.group(1)+'[REDACTED]',output)
 
+def audit_event(service, action, result):
+    """Append-only action journal. If we cannot audit, no action is allowed."""
+    AUDIT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND | getattr(os, 'O_NOFOLLOW', 0)
+    fd = os.open(str(AUDIT_PATH), flags, 0o600)
+    try:
+        os.fchmod(fd, 0o600)
+        record = {'at': datetime.now(timezone.utc).isoformat(), 'service': service,
+                  'action': action, 'result': result}
+        with os.fdopen(fd, 'a', encoding='utf-8') as stream:
+            stream.write(json.dumps(record, ensure_ascii=False) + '\n')
+    except BaseException:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+        raise
+
+def service_action(service, action):
+    if action not in ('start', 'stop', 'restart'):
+        raise ValueError('Unknown action')
+    if service not in {s['service'] for s in get_services()}:
+        raise ValueError('Unknown Paqet tunnel service')
+    # The selected service must be the real Paqet unit, not just a matching YAML filename.
+    unit = run(['systemctl', 'show', service, '--property=FragmentPath,ExecStart', '--no-pager'])
+    if '/usr/local/bin/paqet' not in unit or '/etc/paqet-tunnel-plus/' not in unit:
+        raise ValueError('Service unit was not verified as Paqet Tunnel Plus')
+    if not ACTION_LOCK.acquire(blocking=False):
+        raise ValueError('Another service operation is in progress')
+    try:
+        audit_event(service, action, 'requested')
+        try:
+            result = subprocess.run(
+                ['systemctl', action, service], capture_output=True, text=True,
+                timeout=25, check=False,
+                env={'PATH': '/usr/sbin:/usr/bin:/sbin:/bin', 'LANG': 'C'})
+            ok = result.returncode == 0
+            audit_event(service, action, 'success' if ok else 'failed')
+            if not ok:
+                raise RuntimeError('systemctl returned a nonzero exit status')
+        except (subprocess.TimeoutExpired, OSError):
+            audit_event(service, action, 'error')
+            raise RuntimeError('Service operation timed out or failed')
+        return {'ok': True, 'service': service, 'action': action}
+    finally:
+        ACTION_LOCK.release()
+
 class Handler(BaseHTTPRequestHandler):
-    server_version='PaqetPlusWeb/0.1.1'
+    server_version='PaqetPlusWeb/0.2-preview'
     def log_message(self,fmt,*args):
         sys.stderr.write('['+self.address_string()+'] '+fmt%args+'\n')
     def send(self,status,kind,data):
@@ -118,7 +170,29 @@ class Handler(BaseHTTPRequestHandler):
         except (ValueError,TypeError):
             return self.send(400,'application/json; charset=utf-8','{"error":"bad request"}')
     def do_POST(self):
-        return self.send(405,'application/json; charset=utf-8','{"error":"read_only"}')
+        if urlsplit(self.path).path != '/api/service/action':
+            return self.send(405, 'application/json; charset=utf-8', '{"error":"method_not_allowed"}')
+        if not self.authorized():
+            return self.send(401, 'application/json; charset=utf-8', '{"error":"unauthorized"}')
+        origin = self.headers.get('Origin')
+        if origin and urlsplit(origin).netloc != self.headers.get('Host', ''):
+            return self.send(403, 'application/json; charset=utf-8', '{"error":"origin_mismatch"}')
+        if self.headers.get('Content-Type', '').split(';')[0].strip() != 'application/json':
+            return self.send(415, 'application/json; charset=utf-8', '{"error":"json_only"}')
+        try:
+            size = int(self.headers.get('Content-Length', '0'))
+            if not 2 <= size <= 2048:
+                raise ValueError('Invalid body size')
+            body = json.loads(self.rfile.read(size).decode('utf-8'))
+            if not isinstance(body, dict) or set(body.keys()) != {'service', 'action'}:
+                raise ValueError('Unexpected request fields')
+            data = service_action(body['service'], body['action'])
+            return self.send(200, 'application/json; charset=utf-8',
+                             json.dumps(data, ensure_ascii=False))
+        except (ValueError, TypeError, UnicodeError, json.JSONDecodeError):
+            return self.send(400, 'application/json; charset=utf-8', '{"error":"invalid_request"}')
+        except (RuntimeError, OSError):
+            return self.send(500, 'application/json; charset=utf-8', '{"error":"operation_failed"}')
 
 def main():
     ap=argparse.ArgumentParser(description='Read-only Paqet Plus web panel, SSH forwarded')

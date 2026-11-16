@@ -1,0 +1,24 @@
+name: Web admin checks
+on:
+  pull_request:
+    paths:
+      - "web/**"
+      - ".github/workflows/web-admin.yml"
+  push:
+    branches:
+      - "feature/web-admin-internet"
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Python syntax
+        run: python3 -m py_compile web/web_panel.py
+      - name: Bash syntax
+        run: bash -n web/manage.sh web/public_https.sh
+      - name: JavaScript syntax
+        run: node --check web/app.js
+      - name: Web API tests
+        run: python3 -m unittest discover -s web -p 'test_*.py' -v
+      - name: Flag lab regression tests
+        run: python3 -m unittest test_synced_flag_lab.py -v
